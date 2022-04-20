@@ -1,15 +1,14 @@
-import logging
-import logging.config
 import uvicorn
 from fastapi import FastAPI
 from aiogram import types, Dispatcher, Bot
 
 from bot.bot import bot
 from bot.handlers import dp
-from core.config import Settings, LogConfig
+from core.logger import log
+from core.config import Settings
+from database.connect import database
+
 settings = Settings()
-logging.config.dictConfig(LogConfig().dict())
-log = logging.getLogger("exchange_bot")
 
 app = FastAPI()
 WEBHOOK_PATH = f"/bot/{settings.bot_token}"
@@ -27,6 +26,7 @@ def log_now():
 
 @app.on_event("startup")
 async def on_startup():
+    await database.connect()
     webhook_info = await bot.get_webhook_info()
     if webhook_info.url != WEBHOOK_URL:
         await bot.set_webhook(
@@ -45,6 +45,7 @@ async def bot_webhook(update: dict):
 
 @app.on_event("shutdown")
 async def on_shutdown():
+    await database.disconnect()
     await bot.session.close()
     log.info("Bye!")
 
