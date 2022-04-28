@@ -1,3 +1,5 @@
+from typing import List
+
 from pydantic import BaseSettings
 
 
@@ -5,6 +7,7 @@ class Settings(BaseSettings):
     bot_token: str
     webhook_url: str
     database_url: str
+    admin_ids: List[int]
 
     class Config:
         env_file = '.env'
