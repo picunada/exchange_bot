@@ -26,7 +26,7 @@ class Users(models.Model):
     username = fields.CharField(max_length=50)
     chat_id = fields.IntField()
     is_admin = fields.BooleanField(default=False)
-    is_active = fields.BooleanField(default=False)
+    is_active = fields.BooleanField(default=True)
     created_at = fields.DatetimeField(auto_now_add=True)
 
 
@@ -42,8 +42,8 @@ class Orders(models.Model):
     user: fields.ForeignKeyRelation["Users"] = fields.ForeignKeyField(
         "models.Users", related_name="orders"
     )
-    manager: fields.ForeignKeyRelation["Manager"] = fields.ForeignKeyField(
-        "models.Manager", related_name="orders"
+    manager: fields.ForeignKeyNullableRelation["Manager"] = fields.ForeignKeyField(
+        "models.Manager", related_name="orders", null=True
     )
     bank: fields.ForeignKeyRelation["Banks"] = fields.ForeignKeyField(
         "models.Banks", related_name="orders"
@@ -71,7 +71,9 @@ class Rates(models.Model):
 
 class Manager(models.Model):
     id = fields.IntField(pk=True)
-    user_id = fields.IntField()
+    user: fields.ForeignKeyRelation["Users"] = fields.ForeignKeyField(
+        "models.Users", related_name="manager"
+    )
     created_at = fields.DatetimeField(auto_now_add=True)
 
 

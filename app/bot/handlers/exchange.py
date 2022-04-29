@@ -9,9 +9,7 @@ from bot.filters.admin import AdminFilter
 from bot.states import Exchange
 from core.config import Settings
 from core.logger import log
-from models import Users, Orders, Status, Banks, \
-    Orders_Pydantic, Rates
-from models.models import Manager
+from models import Users, Orders, Status, Banks, Rates, Manager
 from utils.check_card_bin import check_bank
 
 dp.filters_factory.bind(AdminFilter)
@@ -109,54 +107,56 @@ async def check(message: types.Message,
 
 @dp.message_handler(Text(equals="Все верно, готов оплатить! ✅"), state=Exchange.check)
 async def admin_link(message: types.Message, state=FSMContext):
-    await message.answer("В течениие 10 минут прийдет ссылка для оплаты", reply_markup=active_menu)
-    data = await state.get_data()
-    print(type(data))
-    amount = data.get("amount")
-    card_number = str(data.get("card_number"))
-    rate_obj = await Rates.all().order_by("-id").first()
-    count = 0
-    for id in config.admin_ids:
-        admin_obj = await Manager.get(chat_id=id)
-        active_orders = await Orders.filter((Q(status=1) | Q(status=2)) & Q(user=admin_obj)).count()
-        print(active_orders)
-        if active_orders == 0:
-            await bot.send_message(chat_id=id, text=f"@{message.from_user.username}:\n"
-                                                    f"card: {card_number}, amount in UAH: {amount}\n"
-                                                    f"amount in RUB: {int(amount * rate_obj.rate)}")
-            await bot.send_message(chat_id=id, text="Отправьте ссылку")
-            await state.set_state_to_user(user=id, chat=id, state=Exchange.admin_link)
-            await state.set_data_to_user(user=id, chat=id, data=data)
-            count += 1
-    if count == 0:
-        await message.answer("Подождите пару минут, в данный момент все модераторы заняты")
+    try:
+        data = await state.get_data()
+        user_id = data.get("user_id")
+        amount = data.get("amount")
+        card_number = data.get("card_number")
+        current_bank = check_bank(card_number)
+        user_obj = await Users.get(chat_id=user_id)
+        status_obj = await Status.get_or_none(status="New")
+        rate_obj = await Rates.all().order_by("-id").first()
+        if status_obj is None:
+            status_obj = await Status.create(status="New")
+        bank_obj = await Banks.get_or_none(bank_name=current_bank)
+        if bank_obj is None:
+            bank_obj = await Banks.create(bank_name=current_bank)
+        await Orders.create(amount_before=amount, amount_after=int(amount * rate_obj.rate), rate=rate_obj,
+                            withdraw_card=card_number, user=user_obj, manager=None, bank=bank_obj,
+                            status=status_obj)
+        count = 0
+        admins = await Users.filter(is_admin=True).all()
+        print(admins)
+        for admin in admins:
+            active_orders = await Orders.filter((Q(status=1) | Q(status=2)) & Q(manager=admin)).count()
+            print(active_orders)
+            if active_orders == 0:
+                await bot.send_message(chat_id=admin.chat_id, text=f"@{message.from_user.username}:\n"
+                                                                   f"card: {card_number}, amount in UAH: {amount}\n"
+                                                                   f"amount in RUB: {int(amount * rate_obj.rate)}")
+                await bot.send_message(chat_id=admin.chat_id, text="Отправьте ссылку")
+                await state.set_state_to_user(user=admin.chat_id, chat=admin.chat_id, state=Exchange.admin_link)
+                await state.set_data_to_user(user=admin.chat_id, chat=admin.chat_id, data=data)
+                count += 1
+        if count == 0:
+            await message.answer("Подождите пару минут, в данный момент все модераторы заняты")
+        else:
+            await message.answer("В течениие 10 минут прийдет ссылка для оплаты", reply_markup=active_menu)
+    except Exception as e:
+        log.error(e)
 
 
 @dp.message_handler(state=Exchange.admin_link, is_admin=True)
 async def payment_process(message: types.Message,
                           state: FSMContext):
-    print(await state.get_state())
-    print(message.from_user.username)
     data = await state.get_data()
     user_id = data.get("user_id")
-    amount = data.get("amount")
-    card_number = data.get("card_number")
-    print(data)
-    manager_obj = await Manager.get_or_none(user_id=message.from_user.id)
-    if manager_obj is None:
-        manager_obj = await Manager.create(user_id=message.from_user.id)
-    current_bank = check_bank(card_number)
+    admin_obj = await Users.get(chat_id=message.from_user.id)
     user_obj = await Users.get(chat_id=user_id)
-    status_obj = await Status.get_or_none(status="New")
-    rate_obj = await Rates.all().order_by("-id").first()
-    if status_obj is None:
-        status_obj = await Status.create(status="New")
-    bank_obj = await Banks.get_or_none(bank_name=current_bank)
-    if bank_obj is None:
-        bank_obj = await Banks.create(bank_name=current_bank)
-    await Orders.create(amount_before=amount, amount_after=int(amount * rate_obj.rate), rate=rate_obj,
-                        withdraw_card=card_number, user=user_obj, manager=manager_obj, bank=bank_obj,
-                        status=status_obj)
+    manager_obj = await Manager.get_or_none(user=admin_obj)
+    if manager_obj is None:
+        manager_obj = await Manager.create(user=admin_obj)
+    await Orders.filter(user=user_obj).order_by("-id").first().update(manager=manager_obj)
     await bot.send_message(chat_id=user_id, text="Перейдите по ссылке ниже,"
                                                  " введите данные платежной карты и нажмите оплатить."
                                                  " После успешной оплаты вам прийдет оповещение\n\n",
@@ -175,17 +175,13 @@ async def payment_process(message: types.Message,
 @dp.message_handler(state=Exchange.admin_check, is_admin=True)
 async def payment_accept(message: types.Message, state: FSMContext):
     data = await state.get_data()
-    print(data)
     user_id = data.get("user_id")
     try:
         user_obj = await Users.get(chat_id=user_id)
         status_obj, created = await Status.get_or_create(status="Processed")
-        print(status_obj.status)
-        print(user_obj.username)
         await Orders.filter(user=user_obj).order_by("-id").first().update(status=status_obj)
         order_obj = await Orders.filter(user=user_obj).order_by("-id").prefetch_related("manager").first()
-        print(order_obj)
-        await bot.send_message(chat_id=order_obj.manager.user_id,
+        await bot.send_message(chat_id=message.chat.id,
                                text=f"Ссылка отправлена пользователю, id заказа: {order_obj.id},"
                                     f" номер карты: {order_obj.withdraw_card}\n"
                                     f"После оплаты пользователя нажмите на кнопку\n"
@@ -216,11 +212,22 @@ async def transaction_end(message: types.Message, state: FSMContext):
     await bot.send_message(chat_id=user_id, text=f"Обмен завершен успешно!\n"
                                                  f"На карту {order_obj.withdraw_card}"
                                                  f" отправлено {order_obj.amount_after} рублей.", reply_markup=menu)
-    await message.answer("Отлично, ожидайте следущего заказа", reply_markup=types.ReplyKeyboardRemove())
+
     status_obj, created = await Status.get_or_create(status="Finished")
     await Orders.filter(id=order_obj.id).update(status=status_obj)
-    await state.finish()
     await state.set_state_to_user(user=user_id, chat=user_id, state=None)
+    data.clear()
+    active_orders = await Orders.filter((Q(status=1) | Q(status=2)) & Q(manager=None)).get_or_none()
+    if active_orders is None:
+        await message.answer("Отлично, ожидайте следущего заказа", reply_markup=types.ReplyKeyboardRemove())
+        await state.finish()
+    else:
+        new_order = await active_orders.first()
+        await state.reset_data()
+        await state.set_state(Exchange.admin_link)
+        await state.update_data({
+            "user_id": new_order.user.chat_id
+        })
 
 
 @dp.message_handler(commands="get_order_status")
@@ -231,7 +238,7 @@ async def get_order_status(message: types.Message):
             await message.answer("Нажмите кнопку exchange")
             return
         order_obj = await Orders.get_or_none(user=user_obj).prefetch_related('status')
-        current_order = await Orders_Pydantic.from_tortoise_orm(order_obj)
+        current_order = await Orders.from_tortoise_orm(order_obj)
         await message.answer(f"Статус вашего заказа({current_order.id}): {order_obj.status.status}")
     except Exception as e:
         log.error(e)

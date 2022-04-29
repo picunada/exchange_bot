@@ -1,7 +1,7 @@
 import typing
 
 from aiogram.dispatcher.filters import BoundFilter
-
+from models import Users
 from core.config import Settings
 
 
@@ -14,5 +14,5 @@ class AdminFilter(BoundFilter):
     async def check(self, obj):
         if self.is_admin is None:
             return False
-        config = Settings()
-        return (obj.from_user.id in config.admin_ids) == self.is_admin
+        user = await Users.get(chat_id=obj.from_user.id)
+        return user.is_admin == self.is_admin

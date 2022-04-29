@@ -52,3 +52,5 @@ coverage.xml
 .pytest_cache/
 .idea
 data
+/venv
+app/.env
