@@ -109,7 +109,7 @@ async def check(message: types.Message,
 
 @dp.message_handler(Text(equals="Все верно, готов оплатить! ✅"), state=Exchange.check)
 async def admin_link(message: types.Message, state=FSMContext):
-    await message.answer("В течениие 10 минут прийдет ссылка для оплаты")
+    await message.answer("В течениие 10 минут прийдет ссылка для оплаты", reply_markup=active_menu)
     data = await state.get_data()
     print(type(data))
     amount = data.get("amount")
@@ -117,7 +117,7 @@ async def admin_link(message: types.Message, state=FSMContext):
     rate_obj = await Rates.all().order_by("-id").first()
     count = 0
     for id in config.admin_ids:
-        admin_obj = await Users.get(chat_id=id)
+        admin_obj = await Manager.get(chat_id=id)
         active_orders = await Orders.filter((Q(status=1) | Q(status=2)) & Q(user=admin_obj)).count()
         print(active_orders)
         if active_orders == 0:
@@ -167,7 +167,7 @@ async def payment_process(message: types.Message,
                                                  "Если в течении указанного времени вы не смогли оплатить,"
                                                  " обмен отменяется автоматически."
                                                  " Но это не проблема, вы всегда можете оформить новый 😉",
-                           parse_mode="HTML", reply_markup=menu)
+                           parse_mode="HTML", reply_markup=types.ReplyKeyboardRemove())
     await Exchange.next()
     await payment_accept(message, state)
 
@@ -215,11 +215,12 @@ async def transaction_end(message: types.Message, state: FSMContext):
     order_obj = await Orders.all().order_by("-id").get_or_none(user=user_obj).first()
     await bot.send_message(chat_id=user_id, text=f"Обмен завершен успешно!\n"
                                                  f"На карту {order_obj.withdraw_card}"
-                                                 f" отправлено {order_obj.amount_after} рублей.")
+                                                 f" отправлено {order_obj.amount_after} рублей.", reply_markup=menu)
     await message.answer("Отлично, ожидайте следущего заказа", reply_markup=types.ReplyKeyboardRemove())
     status_obj, created = await Status.get_or_create(status="Finished")
     await Orders.filter(id=order_obj.id).update(status=status_obj)
     await state.finish()
+    await state.set_state_to_user(user=user_id, chat=user_id, state=None)
 
 
 @dp.message_handler(commands="get_order_status")
