@@ -225,6 +225,10 @@ async def transaction_end(message: types.Message, state: FSMContext):
         new_order = await active_orders.first()
         await state.reset_data()
         await state.set_state(Exchange.admin_link)
+        await message.answer(text=f"@{new_order.user.username}:\n"
+                                  f"card: {new_order.withdraw_card}, amount in UAH: {new_order.amount_before}\n"
+                                  f"amount in RUB: {new_order.amount_after}")
+        await message.answer(text="Отправьте ссылку")
         await state.update_data({
             "user_id": new_order.user.chat_id
         })
